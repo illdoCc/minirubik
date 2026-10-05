@@ -28,27 +28,26 @@ tests/heuristic: tests/heuristic.c solver.c
 check: solver mini tests/heuristic $(VECTORS)
 	./solver --self-test
 	./tests/heuristic
-	@expected=$$(mktemp); actual=$$(mktemp); \
-		trap 'rm -f "$$expected" "$$actual"' 0 1 2 15; \
+	@actual=$$(mktemp); \
+		trap 'rm -f "$$actual"' 0 1 2 15; \
 		count=0; \
 		while IFS='|' read -r state solution; do \
 			case "$$state" in ""|\#*) continue ;; esac; \
-			printf '%s\n' "$$solution" >"$$expected"; \
 			for binary in ./solver ./mini; do \
 				$$binary "$$state" >"$$actual"; \
 				status=$$?; \
 				test $$status -eq 0 || { \
 					echo "$$binary $$state: exit status $$status"; exit 1; }; \
-				cmp -s "$$actual" "$$expected" || { \
-					echo "$$binary $$state: output mismatch"; \
-					echo "  expected: $$solution"; \
+				./tests/heuristic --check-solution "$$state" "$$solution" \
+					<"$$actual" || { \
+					echo "$$binary $$state: solution check failed"; \
+					echo "  reference: $$solution"; \
 					printf '  got:      '; cat "$$actual"; \
-					echo "  ($$(wc -c <"$$expected") bytes expected, \
-$$(wc -c <"$$actual") produced)"; exit 1; }; \
+					exit 1; }; \
 			done; \
 			count=$$((count + 1)); \
 		done <$(VECTORS); \
-		echo "$$count solution vectors matched by solver and mini"
+		echo "$$count solution vectors solved optimally by solver and mini"
 	@for binary in ./solver ./mini; do \
 		for bad in $(INVALID_STATES); do \
 			$$binary "$$bad" >/dev/null 2>&1; \

@@ -280,7 +280,11 @@ static inline int search_limited(search_t *search, uint32_t rank, uint8_t limit)
         search_frame_t *frame = &stack[depth];
         if (frame->p == 0 && frame->o == 0)
             return depth;
-        if (depth == limit || frame->next_move == MOVES) {
+        uint8_t lower_bound = search->permutation_distance[frame->p];
+        if (search->orientation_distance[frame->o] > lower_bound)
+            lower_bound = search->orientation_distance[frame->o];
+        if (depth == limit || frame->next_move == MOVES ||
+            depth + lower_bound > limit) {
             if (depth == 0)
                 return -1;
             --depth;
@@ -290,6 +294,9 @@ static inline int search_limited(search_t *search, uint32_t rank, uint8_t limit)
         /* Advance the parent before descending so backtracking resumes it. */
         uint8_t move = frame->next_move++;
         uint8_t face = (uint8_t) (move / 3U);
+        /* Consecutive turns of one face can be combined into fewer moves. */
+        if (depth > 0 && face == search->path[depth - 1] / 3U)
+            continue;
         search_frame_t next = {frame->p, frame->o, 0};
         for (uint8_t turn = 0; turn < move % 3U + 1U; ++turn) {
             next.p = search->permutation[face][next.p];
@@ -298,6 +305,24 @@ static inline int search_limited(search_t *search, uint32_t rank, uint8_t limit)
         search->path[depth] = move;
         stack[++depth] = next;
     }
+}
+
+/* Start at the admissible lower bound; the first successful limit is optimal.
+ * Return the solution length, or -1 on failure, as in search_limited.
+ */
+static inline int search_optimal(search_t *search, uint32_t rank)
+{
+    if (rank >= STATES)
+        return -1;
+    uint8_t lower_bound = search->permutation_distance[rank / ORIENTATIONS];
+    if (search->orientation_distance[rank % ORIENTATIONS] > lower_bound)
+        lower_bound = search->orientation_distance[rank % ORIENTATIONS];
+    for (uint8_t limit = lower_bound; limit <= MAX_DEPTH; ++limit) {
+        int length = search_limited(search, rank, limit);
+        if (length >= 0)
+            return length;
+    }
+    return -1;
 }
 
 static uint8_t *build_table(uint8_t *diameter)
@@ -441,19 +466,21 @@ int main(int argc, char **argv)
                 argc > 0 && argv[0] ? argv[0] : "solver");
         return 2;
     }
-    uint8_t *table = build_table(&diameter);
-    if (!table) {
-        fputs("could not build complete state table\n", stderr);
+    search_t search;
+    if (!init_search(&search)) {
+        fputs("could not build search tables\n", stderr);
+        return 1;
+    }
+    int length = search_optimal(&search, rank_state(&state));
+    if (length < 0) {
+        fputs("could not find a solution\n", stderr);
         return 1;
     }
     const char *separator = "";
-    for (uint32_t rank = rank_state(&state); rank; rank = rank_state(&state)) {
-        uint8_t move = table[rank];
-        printf("%s%s", separator, move_names[move]);
+    for (int i = 0; i < length; ++i) {
+        printf("%s%s", separator, move_names[search.path[i]]);
         separator = " ";
-        state = apply_move(state, move);
     }
     putchar('\n');
-    free(table);
     return output_failed();
 }
