@@ -188,18 +188,11 @@ static int valid(const state_t *state)
     return sum % 3U == 0;
 }
 
-static uint8_t *build_table(uint8_t *diameter)
+/* Build independent quarter-turn transitions for permutation and orientation. */
+static void build_transitions(uint16_t permutation[3][PERMUTATIONS],
+                              uint16_t orientation[3][ORIENTATIONS])
 {
-    uint8_t *toward_solved = malloc(STATES);
-    uint32_t *queue = malloc((size_t) STATES * sizeof *queue);
-    uint16_t permutation[3][PERMUTATIONS], orientation[3][ORIENTATIONS];
-    uint32_t head = 0, tail = 1, level_end = 1;
     state_t state;
-    if (!toward_solved || !queue) {
-        free(toward_solved);
-        free(queue);
-        return NULL;
-    }
     for (uint16_t rank = 0; rank < PERMUTATIONS; ++rank) {
         unrank_state((uint32_t) rank * ORIENTATIONS, &state);
         for (uint8_t face = 0; face < 3; ++face) {
@@ -216,6 +209,48 @@ static uint8_t *build_table(uint8_t *diameter)
                 (uint16_t) (rank_state(&next) % ORIENTATIONS);
         }
     }
+}
+
+/* Each quarter, half, or inverse turn costs one step in HTM. The caller
+ * supplies a queue so the two projected searches can reuse its storage.
+ */
+static inline int build_distances(uint16_t count,
+                                 uint16_t transition[3][count],
+                                 uint8_t distance[count],
+                                 uint16_t queue[count])
+{
+    uint16_t head = 0, tail = 1;
+    memset(distance, UINT8_MAX, count);
+    distance[0] = 0;
+    queue[0] = 0;
+    while (head < tail) {
+        uint16_t here = queue[head++];
+        for (uint8_t face = 0; face < 3; ++face) {
+            uint16_t next = here;
+            for (uint8_t turn = 0; turn < 3; ++turn) {
+                next = transition[face][next];
+                if (distance[next] == UINT8_MAX) {
+                    distance[next] = (uint8_t) (distance[here] + 1U);
+                    queue[tail++] = next;
+                }
+            }
+        }
+    }
+    return tail == count;
+}
+
+static uint8_t *build_table(uint8_t *diameter)
+{
+    uint8_t *toward_solved = malloc(STATES);
+    uint32_t *queue = malloc((size_t) STATES * sizeof *queue);
+    uint16_t permutation[3][PERMUTATIONS], orientation[3][ORIENTATIONS];
+    uint32_t head = 0, tail = 1, level_end = 1;
+    if (!toward_solved || !queue) {
+        free(toward_solved);
+        free(queue);
+        return NULL;
+    }
+    build_transitions(permutation, orientation);
     memset(toward_solved, UINT8_MAX, STATES);
     queue[0] = 0;
     toward_solved[0] = 0;

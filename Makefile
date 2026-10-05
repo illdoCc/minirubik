@@ -22,8 +22,12 @@ solver: solver.c
 mini: mini.c
 	$(CC) $(CFLAGS) $< -o $@
 
-check: solver mini $(VECTORS)
+tests/heuristic: tests/heuristic.c solver.c
+	$(CC) $(CFLAGS) $< -o $@
+
+check: solver mini tests/heuristic $(VECTORS)
 	./solver --self-test
+	./tests/heuristic
 	@expected=$$(mktemp); actual=$$(mktemp); \
 		trap 'rm -f "$$expected" "$$actual"' 0 1 2 15; \
 		count=0; \
@@ -94,4 +98,4 @@ endif
 	$(CLANG_FORMAT) -i $(C_SOURCES)
 
 clean:
-	$(RM) solver mini
+	$(RM) solver mini tests/heuristic
