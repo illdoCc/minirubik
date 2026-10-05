@@ -1,0 +1,42 @@
+Full-domain host verification (H3) and search-node measurements
+UTC run start: 2026-10-05T13:51:58Z
+Platform: Linux-7.0.0-31-generic-x86_64-with-glibc2.39
+Compiler: cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+Build: cc -O3 -std=c99 -Wall -Wextra -Wpedantic tests/heuristic.c -o tests/heuristic
+Base commit: 3dfa4bd6c310338298e085df23f6f4c95bb92b95
+SHA256 solver.c: 462e41dc71d8ae4db96e1bfc3c46facdd8a00aa9ad77ea51c5391c3d86fa1054
+SHA256 tests/heuristic.c: fab3aecb404ac2cd41385048aeed2ee0321dee45eb09ffdf92805273c69034fd
+SHA256 Makefile: 7ed65a3c6dcb4c160301c21c22d7c0d0ad5206923fbef56eeae985c0fcfa91f2
+Parallel workers: 4
+Full verification wall seconds: 422.740
+Timing includes each worker's BFS oracle, search-table setup, every search,
+and solution replay. Instrumentation is enabled in the test binary only.
+Each entered node is counted, including roots and pruned nodes, over all
+iterative-deepening rounds. These counts are NOT Ripes retired instructions.
+H3 PASS: all 3674160 solution lengths equal BFS distances; all paths solve.
+The exact distance histogram also matches the known BFS distribution.
+
+distance,states,total_nodes,min_nodes,max_nodes,mean_nodes,worst_rank,worst_state
+0,1,1,1,1,1.000,0,12345671111111
+1,9,54,2,10,6.000,144342,13642571111111
+2,54,513,3,16,9.500,166979,13752641122133
+3,321,4251,4,32,13.243,299619,15426731111111
+4,1847,36120,5,147,19.556,419175,16574321111111
+5,9992,409344,6,646,40.967,13122,12374561111111
+6,50136,6578689,10,1445,131.217,1154007,32176541111111
+7,227536,127807941,11,3945,561.704,511758,17632451111111
+8,870072,2489048046,181,14756,2860.738,3088773,67241531111111
+9,1887748,26241691101,2212,55585,13901.056,12055,12367452232223
+10,623800,30027090377,18297,250324,48135.765,1268202,34527612332213
+11,2644,546315958,140901,639798,206624.795,2437047,54721631111111
+
+sample 21345671111111: 233966 nodes, 11 moves
+search data: 40394 bytes; build queue: 10080; DFS stack: 72
+
+Worker commands and wall seconds:
+./tests/heuristic --full 0 918540 : 388.622 s; exit 0
+./tests/heuristic --full 918540 1837080 : 422.738 s; exit 0
+./tests/heuristic --full 1837080 2755620 : 398.129 s; exit 0
+./tests/heuristic --full 2755620 3674160 : 405.452 s; exit 0
+
+Ripes instruction-budget compliance has not been established.

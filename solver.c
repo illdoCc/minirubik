@@ -3,6 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Host tests can count entered nodes without changing the search itself. */
+#ifndef SEARCH_NODE_VISITED
+#define SEARCH_NODE_VISITED() ((void) 0)
+#endif
+
 enum {
     CUBIES = 7,
     PERMUTATIONS = 5040,
@@ -276,6 +281,7 @@ static inline int search_limited(search_t *search, uint32_t rank, uint8_t limit)
     uint8_t depth = 0;
     stack[0] = (search_frame_t) {(uint16_t) (rank / ORIENTATIONS),
                                (uint16_t) (rank % ORIENTATIONS), 0};
+    SEARCH_NODE_VISITED();
     for (;;) {
         search_frame_t *frame = &stack[depth];
         if (frame->p == 0 && frame->o == 0)
@@ -304,6 +310,7 @@ static inline int search_limited(search_t *search, uint32_t rank, uint8_t limit)
         }
         search->path[depth] = move;
         stack[++depth] = next;
+        SEARCH_NODE_VISITED();
     }
 }
 
