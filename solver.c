@@ -8,12 +8,26 @@ enum {
     PERMUTATIONS = 5040,
     ORIENTATIONS = 729,
     STATES = PERMUTATIONS * ORIENTATIONS,
-    MOVES = 9
+    MOVES = 9,
+    MAX_DEPTH = 11
 };
 
 typedef struct {
     uint8_t p[CUBIES], o[CUBIES];
 } state_t;
+
+/* Transition tables and distance tables. */
+typedef struct {
+    uint16_t permutation[3][PERMUTATIONS], orientation[3][ORIENTATIONS];
+    uint8_t permutation_distance[PERMUTATIONS];
+    uint8_t orientation_distance[ORIENTATIONS];
+    uint8_t path[MAX_DEPTH]; /* Filled by the search when it visits a child. */
+} search_t;
+
+typedef struct {
+    uint16_t p, o;
+    uint8_t next_move;
+} search_frame_t;
 
 /*@ predicate valid_state(state_t *state) =
       (\forall integer i; 0 <= i < CUBIES ==>
@@ -237,6 +251,53 @@ static inline int build_distances(uint16_t count,
         }
     }
     return tail == count;
+}
+
+/* Construct transition tables and distance tables. */
+static inline int init_search(search_t *search)
+{
+    uint16_t queue[PERMUTATIONS];
+    build_transitions(search->permutation, search->orientation);
+    return build_distances(PERMUTATIONS, search->permutation,
+                           search->permutation_distance, queue) &&
+           build_distances(ORIENTATIONS, search->orientation,
+                           search->orientation_distance, queue);
+}
+
+/* Search from the input rank to solved within limit moves. Return the path
+ * length, or -1 if no solution is found or the rank/limit is out of range.
+ * Only path[0..length-1] is valid on success; this is not yet optimal search.
+ */
+static inline int search_limited(search_t *search, uint32_t rank, uint8_t limit)
+{
+    if (rank >= STATES || limit > MAX_DEPTH)
+        return -1;
+    search_frame_t stack[MAX_DEPTH + 1];
+    uint8_t depth = 0;
+    stack[0] = (search_frame_t) {(uint16_t) (rank / ORIENTATIONS),
+                               (uint16_t) (rank % ORIENTATIONS), 0};
+    for (;;) {
+        search_frame_t *frame = &stack[depth];
+        if (frame->p == 0 && frame->o == 0)
+            return depth;
+        if (depth == limit || frame->next_move == MOVES) {
+            if (depth == 0)
+                return -1;
+            --depth;
+            continue;
+        }
+
+        /* Advance the parent before descending so backtracking resumes it. */
+        uint8_t move = frame->next_move++;
+        uint8_t face = (uint8_t) (move / 3U);
+        search_frame_t next = {frame->p, frame->o, 0};
+        for (uint8_t turn = 0; turn < move % 3U + 1U; ++turn) {
+            next.p = search->permutation[face][next.p];
+            next.o = search->orientation[face][next.o];
+        }
+        search->path[depth] = move;
+        stack[++depth] = next;
+    }
 }
 
 static uint8_t *build_table(uint8_t *diameter)
