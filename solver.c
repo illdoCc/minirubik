@@ -87,9 +87,11 @@ static state_t quarter_turn(state_t state, uint8_t face)
 
 static state_t apply_move(state_t state, uint8_t move)
 {
-    uint8_t turns = (uint8_t) (move % 3U + 1U);
+    /* Move IDs are 0..8, so two comparisons give the face without division. */
+    uint8_t face = (uint8_t) ((move >= 3U) + (move >= 6U));
+    uint8_t turns = (uint8_t) (move - ((face << 1) + face) + 1U);
     for (uint8_t i = 0; i < turns; ++i)
-        state = quarter_turn(state, (uint8_t) (move / 3U));
+        state = quarter_turn(state, face);
     return state;
 }
 
@@ -100,10 +102,15 @@ static state_t apply_move(state_t state, uint8_t move)
       state->p[i] != state->p[j];
     requires \forall integer i; 0 <= i < CUBIES ==>
       0 <= state->o[i] < 3;
-    assigns \nothing;
-    ensures \result < STATES;
+    requires \valid(permutation_rank) && \valid(orientation_rank);
+    requires \separated(state, permutation_rank, orientation_rank);
+    assigns *permutation_rank, *orientation_rank;
+    ensures *permutation_rank < PERMUTATIONS;
+    ensures *orientation_rank < ORIENTATIONS;
  */
-static uint32_t rank_state(const state_t *state)
+static void rank_components(const state_t *state,
+                            uint16_t *permutation_rank,
+                            uint16_t *orientation_rank)
 {
     uint32_t p = 0, o = 0;
     /*@ loop invariant 0 <= i <= CUBIES;
@@ -124,7 +131,30 @@ static uint32_t rank_state(const state_t *state)
         for (uint8_t j = (uint8_t) (i + 1U); j < CUBIES; ++j)
             if (state->p[j] < state->p[i])
                 ++smaller;
-        p = p * (CUBIES - i) + smaller;
+        /* The multiplier decreases from 7 to 1; p starts at zero. */
+        switch (CUBIES - i) {
+        case 7:
+            p = 0;
+            break;
+        case 6:
+            p = (p << 2) + (p << 1);
+            break;
+        case 5:
+            p = (p << 2) + p;
+            break;
+        case 4:
+            p <<= 2;
+            break;
+        case 3:
+            p = (p << 1) + p;
+            break;
+        case 2:
+            p <<= 1;
+            break;
+        case 1:
+            break;
+        }
+        p += smaller;
     }
     /*@ loop invariant 0 <= i <= 6;
         loop invariant (i == 0 ==> o == 0) && (i == 1 ==> o < 3) &&
@@ -135,8 +165,26 @@ static uint32_t rank_state(const state_t *state)
         loop variant 6 - i;
      */
     for (uint8_t i = 0; i < 6; ++i)
-        o = o * 3U + state->o[i];
-    return p * ORIENTATIONS + o;
+        o = (o << 1) + o + state->o[i];
+    *permutation_rank = (uint16_t) p;
+    *orientation_rank = (uint16_t) o;
+}
+
+/*@ requires \valid_read(state);
+    requires \forall integer i; 0 <= i < CUBIES ==>
+      0 <= state->p[i] < CUBIES;
+    requires \forall integer i, j; 0 <= i < j < CUBIES ==>
+      state->p[i] != state->p[j];
+    requires \forall integer i; 0 <= i < CUBIES ==>
+      0 <= state->o[i] < 3;
+    assigns \nothing;
+    ensures \result < STATES;
+ */
+static uint32_t rank_state(const state_t *state)
+{
+    uint16_t p, o;
+    rank_components(state, &p, &o);
+    return (uint32_t) p * ORIENTATIONS + o;
 }
 
 /*@ requires \valid(state); requires rank < STATES; assigns *state; */
@@ -204,7 +252,14 @@ static int valid(const state_t *state)
                 return 0;
         sum = (uint8_t) (sum + state->o[i]);
     }
-    return sum % 3U == 0;
+    /* The sum is at most 14; subtract multiples of 3 to leave 0..2. */
+    if (sum >= 12U)
+        sum -= 12U;
+    if (sum >= 6U)
+        sum -= 6U;
+    if (sum >= 3U)
+        sum -= 3U;
+    return sum == 0;
 }
 
 /* Build independent quarter-turn transitions for permutation and orientation. */
@@ -269,18 +324,18 @@ static inline int init_search(search_t *search)
                            search->orientation_distance, queue);
 }
 
-/* Search from the input rank to solved within limit moves. Return the path
- * length, or -1 if no solution is found or the rank/limit is out of range.
+/* Search from the input ranks to solved within limit moves. Return the path
+ * length, or -1 if no solution is found or the ranks/limit are out of range.
  * Only path[0..length-1] is valid on success; this is not yet optimal search.
  */
-static inline int search_limited(search_t *search, uint32_t rank, uint8_t limit)
+static inline int search_limited(search_t *search, uint16_t p, uint16_t o,
+                                 uint8_t limit)
 {
-    if (rank >= STATES || limit > MAX_DEPTH)
+    if (p >= PERMUTATIONS || o >= ORIENTATIONS || limit > MAX_DEPTH)
         return -1;
     search_frame_t stack[MAX_DEPTH + 1];
     uint8_t depth = 0;
-    stack[0] = (search_frame_t) {(uint16_t) (rank / ORIENTATIONS),
-                               (uint16_t) (rank % ORIENTATIONS), 0};
+    stack[0] = (search_frame_t) {p, o, 0};
     SEARCH_NODE_VISITED();
     for (;;) {
         search_frame_t *frame = &stack[depth];
@@ -299,12 +354,18 @@ static inline int search_limited(search_t *search, uint32_t rank, uint8_t limit)
 
         /* Advance the parent before descending so backtracking resumes it. */
         uint8_t move = frame->next_move++;
-        uint8_t face = (uint8_t) (move / 3U);
+        uint8_t face = (uint8_t) ((move >= 3U) + (move >= 6U));
         /* Consecutive turns of one face can be combined into fewer moves. */
-        if (depth > 0 && face == search->path[depth - 1] / 3U)
-            continue;
+        if (depth > 0) {
+            uint8_t previous = search->path[depth - 1];
+            uint8_t previous_face =
+                (uint8_t) ((previous >= 3U) + (previous >= 6U));
+            if (face == previous_face)
+                continue;
+        }
+        uint8_t turns = (uint8_t) (move - ((face << 1) + face) + 1U);
         search_frame_t next = {frame->p, frame->o, 0};
-        for (uint8_t turn = 0; turn < move % 3U + 1U; ++turn) {
+        for (uint8_t turn = 0; turn < turns; ++turn) {
             next.p = search->permutation[face][next.p];
             next.o = search->orientation[face][next.o];
         }
@@ -317,15 +378,15 @@ static inline int search_limited(search_t *search, uint32_t rank, uint8_t limit)
 /* Start at the admissible lower bound; the first successful limit is optimal.
  * Return the solution length, or -1 on failure, as in search_limited.
  */
-static inline int search_optimal(search_t *search, uint32_t rank)
+static inline int search_optimal(search_t *search, uint16_t p, uint16_t o)
 {
-    if (rank >= STATES)
+    if (p >= PERMUTATIONS || o >= ORIENTATIONS)
         return -1;
-    uint8_t lower_bound = search->permutation_distance[rank / ORIENTATIONS];
-    if (search->orientation_distance[rank % ORIENTATIONS] > lower_bound)
-        lower_bound = search->orientation_distance[rank % ORIENTATIONS];
+    uint8_t lower_bound = search->permutation_distance[p];
+    if (search->orientation_distance[o] > lower_bound)
+        lower_bound = search->orientation_distance[o];
     for (uint8_t limit = lower_bound; limit <= MAX_DEPTH; ++limit) {
-        int length = search_limited(search, rank, limit);
+        int length = search_limited(search, p, o, limit);
         if (length >= 0)
             return length;
     }
@@ -412,7 +473,9 @@ static int parse_state(const char *input, state_t *state)
         int limit = i < 7 ? 7 : 3;
         if (input[i] < '1' || input[i] > '0' + limit)
             return 0;
-        (i < 7 ? state->p : state->o)[i % 7] = (uint8_t) (input[i] - '1');
+        int index = i < CUBIES ? i : i - CUBIES;
+        (i < CUBIES ? state->p : state->o)[index] =
+            (uint8_t) (input[i] - '1');
     }
     return input[14] == '\0' && valid(state);
 }
@@ -478,7 +541,9 @@ int main(int argc, char **argv)
         fputs("could not build search tables\n", stderr);
         return 1;
     }
-    int length = search_optimal(&search, rank_state(&state));
+    uint16_t p, o;
+    rank_components(&state, &p, &o);
+    int length = search_optimal(&search, p, o);
     if (length < 0) {
         fputs("could not find a solution\n", stderr);
         return 1;

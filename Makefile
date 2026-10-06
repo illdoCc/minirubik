@@ -83,7 +83,8 @@ check: solver mini tests/heuristic $(VECTORS)
 
 prove: solver.c
 	@log=$$(mktemp); trap 'rm -f "$$log"' 0 1 2 15; \
-		$(FRAMA_C) -wp -wp-fct quarter_turn,rank_state,valid,parse_state \
+		$(FRAMA_C) -wp \
+		-wp-fct quarter_turn,rank_components,rank_state,valid,parse_state \
 		-wp-rte -rte-verbose 0 -wp-prover alt-ergo -wp-timeout 20 \
 		-wp-cache none solver.c >"$$log" 2>&1; rc=$$?; \
 		grep -Fvx -e '[wp] Warning: Skipped RTE guards: unaligned pointers (\aligned not supported)' \

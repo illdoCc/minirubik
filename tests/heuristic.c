@@ -25,7 +25,9 @@ static int check_solution_path(search_t *search, uint32_t rank, int length)
 
 static int check_path(search_t *search, uint32_t rank, uint8_t limit)
 {
-    int length = search_limited(search, rank, limit);
+    uint16_t p = (uint16_t) (rank / ORIENTATIONS);
+    uint16_t o = (uint16_t) (rank % ORIENTATIONS);
+    int length = search_limited(search, p, o, limit);
     if (length > limit)
         return -1;
     return check_solution_path(search, rank, length);
@@ -54,9 +56,11 @@ static int check_distances(const uint8_t *table)
     search_t search;
     if (!init_search(&search))
         return 0;
-    if (search_limited(&search, STATES, 0) != -1 ||
-        search_limited(&search, 0, MAX_DEPTH + 1) != -1 ||
-        search_optimal(&search, STATES) != -1)
+    if (search_limited(&search, PERMUTATIONS, 0, 0) != -1 ||
+        search_limited(&search, 0, ORIENTATIONS, 0) != -1 ||
+        search_limited(&search, 0, 0, MAX_DEPTH + 1) != -1 ||
+        search_optimal(&search, PERMUTATIONS, 0) != -1 ||
+        search_optimal(&search, 0, ORIENTATIONS) != -1)
         return 0;
     /* A loose limit must still produce a valid path without repeated faces. */
     state_t solved;
@@ -65,12 +69,15 @@ static int check_distances(const uint8_t *table)
     if (check_path(&search, rank_state(&scramble), MAX_DEPTH) < 0)
         return 0;
     /* This known distance-11 state must reach the last stack/path entries. */
-    if (!parse_state("21345671111111", &scramble) ||
-        search_limited(&search, rank_state(&scramble), MAX_DEPTH - 1) != -1 ||
+    if (!parse_state("21345671111111", &scramble))
+        return 0;
+    uint16_t sample_p, sample_o;
+    rank_components(&scramble, &sample_p, &sample_o);
+    if (search_limited(&search, sample_p, sample_o, MAX_DEPTH - 1) != -1 ||
         check_path(&search, rank_state(&scramble), MAX_DEPTH) != MAX_DEPTH)
         return 0;
     uint32_t sample_rank = rank_state(&scramble);
-    int sample_length = search_optimal(&search, sample_rank);
+    int sample_length = search_optimal(&search, sample_p, sample_o);
     if (check_solution_path(&search, sample_rank, sample_length) != MAX_DEPTH)
         return 0;
     if (search.permutation_distance[0] != 0 ||
@@ -91,6 +98,8 @@ static int check_distances(const uint8_t *table)
      */
     uint8_t checked[MAX_DEPTH + 1] = {0};
     for (uint32_t rank = 0; rank < STATES; ++rank) {
+        uint16_t p = (uint16_t) (rank / ORIENTATIONS);
+        uint16_t o = (uint16_t) (rank % ORIENTATIONS);
         int distance = exact_distance(table, rank);
         if (distance < 0)
             return 0;
@@ -100,14 +109,14 @@ static int check_distances(const uint8_t *table)
         /* Check cutoff, backtracking, and paths for every shallow state. */
         if (distance <= 4) {
             if (distance > 0 &&
-                search_limited(&search, rank, distance - 1U) != -1)
+                search_limited(&search, p, o, distance - 1U) != -1)
                 return 0;
             if (check_path(&search, rank, distance) != distance)
                 return 0;
         }
         /* All shallow states, plus one state at each remaining distance. */
         if (distance <= 4 || !checked[distance]) {
-            int length = search_optimal(&search, rank);
+            int length = search_optimal(&search, p, o);
             if (length != distance ||
                 check_solution_path(&search, rank, length) != distance)
                 return 0;
@@ -135,9 +144,11 @@ static int check_full(const uint8_t *table, uint32_t begin, uint32_t end)
     if (!init_search(&search))
         return 0;
     for (uint32_t rank = begin; rank < end; ++rank) {
+        uint16_t p = (uint16_t) (rank / ORIENTATIONS);
+        uint16_t o = (uint16_t) (rank % ORIENTATIONS);
         int distance = exact_distance(table, rank);
         nodes_visited = 0;
-        int length = search_optimal(&search, rank);
+        int length = search_optimal(&search, p, o);
         if (distance < 0 || length != distance ||
             check_solution_path(&search, rank, length) != distance) {
             fprintf(stderr, "rank %u: BFS %d, search %d\n",
@@ -177,8 +188,10 @@ static int check_full(const uint8_t *table, uint32_t begin, uint32_t end)
     state_t sample;
     if (!parse_state("21345671111111", &sample))
         return 0;
+    uint16_t sample_p, sample_o;
+    rank_components(&sample, &sample_p, &sample_o);
     nodes_visited = 0;
-    int length = search_optimal(&search, rank_state(&sample));
+    int length = search_optimal(&search, sample_p, sample_o);
     if (check_solution_path(&search, rank_state(&sample), length) != MAX_DEPTH)
         return 0;
     printf("sample 21345671111111: %" PRIu64 " nodes, %d moves\n",
