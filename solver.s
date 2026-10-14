@@ -1,3 +1,9 @@
+# Build with tools/build_ripes.py; --render enables the LED Matrix.
+.equ RENDER, 0
+.if RENDER
+.equ LED_DELAY, 1000000        # Loop iterations per frame; lower for pipelines
+.endif
+
 .data
 input_state:
     .asciz "21345671111111"
@@ -41,6 +47,58 @@ invalid_message:
     .asciz "invalid input: expected PPPPPPPOOOOOOO\n"
 search_failed_message:
     .asciz "could not find a solution\n"
+verify_failed_message:
+    .asciz "solution replay did not reach solved\n"
+
+# Cubie source and twist arrays from solver.c, in R, B, D order.
+cube_sources:
+    .byte 1, 4, 2, 0, 3, 5, 6
+    .byte 0, 1, 2, 4, 5, 6, 3
+    .byte 0, 2, 5, 3, 1, 4, 6
+cube_twists:
+    .byte 1, 2, 0, 2, 1, 0, 0
+    .byte 0, 0, 0, 1, 2, 1, 2
+    .byte 0, 0, 0, 0, 0, 0, 0
+
+.if RENDER
+.align 4
+led_colors:
+    # U: white, L: orange, F: green, R: red, B: blue, D: yellow.
+    .word 0x00ffffff, 0x00ff8000, 0x0000c000
+    .word 0x00ff0000, 0x000040ff, 0x00ffff00
+# Cubies 0-7 in report.md; cubie 0 is the fixed FUL corner.
+# Slots: UFL, URF, DFR, DLF, UBR, DRB, DBL, ULB.
+corner_colors:
+    .byte 0, 2, 1, 0, 3, 2, 5, 2, 3, 5, 1, 2
+    .byte 0, 4, 3, 5, 3, 4, 5, 4, 1, 0, 1, 4
+# Each facelet: physical position, corner slot, LED x, LED y.
+# Exterior net from report.md: U above L F R B, D below F.
+led_facelets:
+    .byte 7, 0, 9, 2                   # U
+    .byte 4, 0, 13, 2
+    .byte 0, 0, 9, 5
+    .byte 1, 0, 13, 5
+    .byte 7, 1, 0, 9                   # L
+    .byte 0, 2, 4, 9
+    .byte 6, 2, 0, 12
+    .byte 3, 1, 4, 12
+    .byte 0, 1, 9, 9                   # F
+    .byte 1, 2, 13, 9
+    .byte 3, 2, 9, 12
+    .byte 2, 1, 13, 12
+    .byte 1, 1, 18, 9                   # R
+    .byte 4, 2, 22, 9
+    .byte 2, 2, 18, 12
+    .byte 5, 1, 22, 12
+    .byte 4, 1, 27, 9                   # B
+    .byte 7, 2, 31, 9
+    .byte 5, 2, 27, 12
+    .byte 6, 1, 31, 12
+    .byte 3, 0, 9, 16                   # D
+    .byte 2, 0, 13, 16
+    .byte 6, 0, 9, 19
+    .byte 5, 0, 13, 19
+.endif
 
 # Ripes .align specifies a byte boundary. Keep sp aligned to 16 bytes.
 .align 16
@@ -56,6 +114,12 @@ main:
     la a1, cube_state
     jal ra, parse_state        # DONE: parse_state (also calls valid)
     beq a0, zero, main_invalid  # if (!parse_state(...)) return 2;
+
+.if RENDER
+    la a0, cube_state          # Show the input cube before searching
+    jal ra, render_cube
+    jal ra, render_delay
+.endif
 
     la a0, cube_state           # rank_components(&state, &p, &o)
     la a1, permutation_rank
@@ -89,13 +153,42 @@ main_print_move:
     lw a0, 0(t0)
     li a7, 4                   # Print the move name
     ecall
+    la t0, search_path         # Apply the exact move that was just printed
+    add t0, t0, s1
+    lbu a1, 0(t0)
+    la a0, cube_state
+    jal ra, apply_move
+.if RENDER
+    la a0, cube_state          # Redraw after each complete HTM move
+    jal ra, render_cube
+    jal ra, render_delay
+.endif
     addi s1, s1, 1             # ++i;
     j main_print_loop
 main_print_done:
     li a0, 10                  # putchar('\n');
     li a7, 11
     ecall
+    la a0, cube_state          # Verify the replayed state using existing code
+    jal ra, valid
+    beq a0, zero, main_verify_failed
+    la a0, cube_state
+    la a1, permutation_rank
+    la a2, orientation_rank
+    jal ra, rank_components
+    la t0, permutation_rank
+    lhu t1, 0(t0)
+    la t0, orientation_rank
+    lhu t2, 0(t0)
+    or t1, t1, t2              # Both ranks must be zero for solved
+    bne t1, zero, main_verify_failed
     li a0, 0                    # return 0;
+    j main_exit
+main_verify_failed:
+    la a0, verify_failed_message
+    li a7, 4
+    ecall
+    li a0, 3
     j main_exit
 main_search_failed:
     la a0, search_failed_message # Report search failure
@@ -464,3 +557,142 @@ search_limited_return:
 search_limited_invalid:
     li a0, -1
     ret
+
+# apply_move(state, move): a0 = state, a1 = move; update the 14-byte state.
+# Direct translation of solver.c's apply_move/quarter_turn, with a temp state.
+apply_move:
+    addi sp, sp, -16
+    sltiu t0, a1, 3            # face = (move >= 3) + (move >= 6)
+    xori t0, t0, 1
+    sltiu t1, a1, 6
+    xori t1, t1, 1
+    add t0, t0, t1
+    slli t1, t0, 3            # Row offset = face * 7
+    sub t1, t1, t0
+    la a2, cube_sources
+    add a2, a2, t1
+    la a3, cube_twists
+    add a3, a3, t1
+    slli t1, t0, 1            # turns = move - face * 3 + 1
+    add t1, t1, t0
+    sub a4, a1, t1
+    addi a4, a4, 1
+    li a5, 7
+    li a6, 14
+apply_quarter_turn:
+    li t0, 0
+apply_cubie:
+    add t1, a2, t0            # from = source[face][i]
+    lbu t2, 0(t1)
+    add t3, a0, t2
+    lbu t4, 0(t3)             # next.p[i] = state.p[from]
+    add t5, sp, t0
+    sb t4, 0(t5)
+    lbu t4, 7(t3)             # next.o[i] = (o[from] + twist[face][i]) % 3
+    add t1, a3, t0
+    lbu t2, 0(t1)
+    add t4, t4, t2
+    addi t4, t4, -3           # The sum is 0-4, so subtract 3 at most once
+    bge t4, zero, apply_store_orientation
+    addi t4, t4, 3
+apply_store_orientation:
+    sb t4, 7(t5)
+    addi t0, t0, 1
+    bltu t0, a5, apply_cubie
+    li t0, 0
+apply_copy:
+    add t1, sp, t0            # Copy the complete temp state back to state
+    lbu t2, 0(t1)
+    add t3, a0, t0
+    sb t2, 0(t3)
+    addi t0, t0, 1
+    bltu t0, a6, apply_copy
+    addi a4, a4, -1
+    bne a4, zero, apply_quarter_turn
+    addi sp, sp, 16
+    ret
+
+.if RENDER
+# render_cube(state): a0 = state. Requires a 35x25 LED Matrix in the GUI.
+# All six faces are viewed from outside, matching report.md's unfolded net.
+render_cube:
+    li a6, LED_MATRIX_0_BASE
+    li t3, LED_MATRIX_0_WIDTH
+    slli a7, t3, 2            # Byte stride of one LED row
+    li t2, LED_MATRIX_0_HEIGHT
+    mv t0, a6
+render_clear_row:
+    mv t1, t3                 # Clear background, separators, and spare rows
+render_clear_pixel:
+    sw zero, 0(t0)
+    addi t0, t0, 4
+    addi t1, t1, -1
+    bne t1, zero, render_clear_pixel
+    addi t2, t2, -1
+    bne t2, zero, render_clear_row
+
+    la a1, led_facelets
+    li a2, 24
+    la a3, led_colors
+    la a4, corner_colors
+render_facelet:
+    lbu t0, 0(a1)             # physical position, corner slot, x, y
+    lbu t1, 1(a1)
+    lbu t2, 2(a1)
+    lbu t3, 3(a1)
+    li t4, 0                  # Fixed FUL corner: cubie 0, orientation 0
+    li t5, 0
+    beq t0, zero, render_color
+    addi t0, t0, -1           # Moving positions 1-7 use state indices 0-6
+    add t4, a0, t0
+    lbu t5, 7(t4)
+    lbu t4, 0(t4)
+    addi t4, t4, 1            # Physical cubie number = state.p[index] + 1
+render_color:
+    add t1, t1, t5            # color slot = (slot + orientation) % 3
+    li t6, 3
+    bltu t1, t6, render_color_slot
+    addi t1, t1, -3
+render_color_slot:
+    slli t5, t4, 1            # corner_colors[cubie * 3 + color slot]
+    add t4, t4, t5
+    add t4, a4, t4
+    add t4, t4, t1
+    lbu t4, 0(t4)
+    slli t4, t4, 2
+    add t4, a3, t4
+    lw t4, 0(t4)              # 24-bit RGB value
+
+    mv t5, a6                 # BASE + y * row_stride + x * 4
+    beq t3, zero, render_column
+render_row_offset:
+    add t5, t5, a7
+    addi t3, t3, -1
+    bne t3, zero, render_row_offset
+render_column:
+    slli t2, t2, 2
+    add t5, t5, t2
+    li t6, 3                  # Each facelet is four LEDs wide, three tall
+render_block_row:
+    sw t4, 0(t5)
+    sw t4, 4(t5)
+    sw t4, 8(t5)
+    sw t4, 12(t5)
+    add t5, t5, a7
+    addi t6, t6, -1
+    bne t6, zero, render_block_row
+    addi a1, a1, 4
+    addi a2, a2, -1
+    bne a2, zero, render_facelet
+    ret
+
+# Delay only the GUI build so intermediate states remain visible.
+render_delay:
+    li t0, LED_DELAY
+    beq t0, zero, render_delay_done
+render_delay_loop:
+    addi t0, t0, -1
+    bne t0, zero, render_delay_loop
+render_delay_done:
+    ret
+.endif

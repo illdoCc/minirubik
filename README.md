@@ -51,6 +51,47 @@ eight times the runtime and three times the memory for its brevity.
 The 14-digit argument describes the scramble and the printed line is the
 solution. Both formats are explained below.
 
+### Ripes assembly and LED display
+
+Edit `input_state` in `solver.s`, then build one of these files:
+
+```sh
+python3 tools/build_ripes.py -o /tmp/solver-cli.s
+python3 tools/build_ripes.py --render -o /tmp/solver-led.s
+```
+
+The builder combines `tables.s` and `solver.s` and selects the `.if RENDER`
+blocks. The pinned Ripes build, `v2.2.6-106-g5b8a616`, does not implement
+`.if` or `.include`, so load the generated file rather than the source files.
+Both versions replay the actual solution and check that it reaches solved;
+they differ only in the renderer and its delay.
+
+For the GUI, add an **LED Matrix** in the I/O tab and set **Width = 35** and
+**Height = 25**. Load `/tmp/solver-led.s` as a **Source file**, select RV32I
+with extensions disabled, and use **Run** (the fast-run button). The initial
+cube is displayed before searching, followed by one frame per returned move.
+`LED_DELAY` in `solver.s` controls the delay loop between frames; reduce it
+when stepping through a pipeline model, then rebuild the generated file.
+
+The net is `U` above `L F R B`, with `D` below `F`. Colors are white, orange,
+green, red, blue, and yellow respectively. Each facelet occupies 4 by 3 LEDs;
+the blank columns and rows separate faces. Pixels are written row-major at
+`LED_MATRIX_0_BASE + 4 * (y * LED_MATRIX_0_WIDTH + x)` using RV32I additions
+and shifts. The code also uses `LED_MATRIX_0_HEIGHT` when clearing the display.
+
+Use the CLI file for instruction counts, with the renderer compiled out:
+
+```sh
+"$RIPES" --mode cli --src /tmp/solver-cli.s -t asm --proc RV32_ISS --iret
+python3 tests/led.py "$RIPES"
+```
+
+Set `RIPES` to the pinned AppImage path. The LED test maps the peripheral to
+test RAM and checks every pixel of every frame against independent 3D
+rotations, including blank areas and bounds. It also checks actual solution
+replay, the disabled renderer, and solved, short, and distance-11 cases on
+`RV32_5S`. The 50-million-instruction requirement excludes the renderer.
+
 ### Reading the 14-digit input
 
 The program receives one 14-digit code with no spaces. For explanation, split
