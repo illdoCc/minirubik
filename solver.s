@@ -336,35 +336,38 @@ search_limited:
     li t0, 11                   # if (limit > MAX_DEPTH) return -1;
     bltu t0, a2, search_limited_invalid
 
-    # stack[12]: 72 bytes; saved s0/s1: 8 bytes. Total: 80 bytes.
+    # stack[12]: 72 bytes; saved s0-s5: 24 bytes. Total: 96 bytes.
     # Each entry: p at +0, o at +2, next_move at +4, padding at +5.
-    addi sp, sp, -80            # search_frame_t stack[MAX_DEPTH + 1];
+    addi sp, sp, -96            # search_frame_t stack[MAX_DEPTH + 1];
     sw s0, 72(sp)
     sw s1, 76(sp)
+    sw s2, 80(sp)
+    sw s3, 84(sp)
+    sw s4, 88(sp)
+    sw s5, 92(sp)
+    la s2, permutation_distance # Keep the four table bases across iterations
+    la s3, orientation_distance
+    la s4, permutation_table
+    la s5, orientation_table
     li s0, 0                   # depth = 0; keep depth in s0
     mv s1, a2                  # Keep limit in s1
     sh a0, 0(sp)               # stack[0] = (search_frame_t) {p, o, 0};
     sh a1, 2(sp)
     sb zero, 4(sp)
+    mv t0, sp                 # frame = &stack[0]; keep its address in t0
     # SEARCH_NODE_VISITED() is a no-op outside host tests.
 
 search_limited_loop:
     # s0 = depth, s1 = limit; t0 = frame, t1 = p, t2 = o.
     # a0 = move, a1 = face, a2 = turns; a3/a4 = transition row addresses.
-    slli t0, s0, 1             # frame = &stack[depth]; each entry is 6 bytes
-    slli t3, s0, 2
-    add t0, t0, t3
-    add t0, sp, t0
     lhu t1, 0(t0)
     lhu t2, 2(t0)
     or t3, t1, t2              # if (frame->p == 0 && frame->o == 0)
     beq t3, zero, search_limited_solved
 
-    la t4, permutation_distance # lower_bound = permutation_distance[frame->p];
-    add t4, t4, t1
+    add t4, s2, t1             # lower_bound = permutation_distance[frame->p];
     lbu t3, 0(t4)
-    la t4, orientation_distance # if (orientation_distance[o] > lower_bound)
-    add t4, t4, t2
+    add t4, s3, t2             # if (orientation_distance[o] > lower_bound)
     lbu t5, 0(t4)
     bgeu t3, t5, search_limited_bound
     mv t3, t5                  # lower_bound = orientation_distance[o];
@@ -403,8 +406,8 @@ search_limited_turns:
 
     # Select rows for face 0, 1, or 2 by adding the row size zero to two times.
     # permutation rows: 5040 * 2 bytes; orientation rows: 729 * 2 bytes.
-    la a3, permutation_table
-    la a4, orientation_table
+    mv a3, s4
+    mv a4, s5
     beq a1, zero, search_limited_quarter_turn
     li t4, 10080
     li t5, 1458
@@ -428,7 +431,7 @@ search_limited_quarter_turn:
     add t4, t4, s0
     sb a0, 0(t4)
     addi s0, s0, 1             # stack[++depth] = next;
-    addi t0, t0, 6
+    addi t0, t0, 6             # frame = &stack[depth]; each entry is 6 bytes
     sh t1, 0(t0)
     sh t2, 2(t0)
     sb zero, 4(t0)
@@ -437,6 +440,7 @@ search_limited_quarter_turn:
 search_limited_backtrack:
     beq s0, zero, search_limited_failed # if (depth == 0) return -1;
     addi s0, s0, -1            # --depth; continue;
+    addi t0, t0, -6            # Move frame back to the parent entry
     j search_limited_loop
 search_limited_solved:
     mv a0, s0                  # return depth;
@@ -444,9 +448,13 @@ search_limited_solved:
 search_limited_failed:
     li a0, -1
 search_limited_return:
+    lw s5, 92(sp)
+    lw s4, 88(sp)
+    lw s3, 84(sp)
+    lw s2, 80(sp)
     lw s1, 76(sp)
     lw s0, 72(sp)
-    addi sp, sp, 80
+    addi sp, sp, 96
     ret
 search_limited_invalid:
     li a0, -1
