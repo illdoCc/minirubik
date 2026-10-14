@@ -337,7 +337,7 @@ search_limited:
     bltu t0, a2, search_limited_invalid
 
     # stack[12]: 72 bytes; saved s0-s5: 24 bytes. Total: 96 bytes.
-    # Each entry: p at +0, o at +2, next_move at +4, padding at +5.
+    # Each entry: p at +0, o at +2, next_move at +4, previous_face at +5.
     addi sp, sp, -96            # search_frame_t stack[MAX_DEPTH + 1];
     sw s0, 72(sp)
     sw s1, 76(sp)
@@ -355,6 +355,8 @@ search_limited:
     sh a0, 0(sp)               # stack[0] = (search_frame_t) {p, o, 0};
     sh a1, 2(sp)
     sb zero, 4(sp)
+    li t3, 3                  # Root has no previous face; valid faces are 0-2
+    sb t3, 5(sp)
     mv t0, sp                 # frame = &stack[0]; keep its address in t0
     # SEARCH_NODE_VISITED() is a no-op outside host tests.
 
@@ -366,6 +368,7 @@ search_limited_loop:
     lhu t2, 2(t0)
     or t3, t1, t2              # if (frame->p == 0 && frame->o == 0)
     beq t3, zero, search_limited_solved
+    beq s0, s1, search_limited_backtrack # Unsolved and depth == limit
 
     add t4, s2, t1             # lower_bound = permutation_distance[frame->p];
     lbu t3, 0(t4)
@@ -374,7 +377,6 @@ search_limited_loop:
     bgeu t3, t5, search_limited_bound
     mv t3, t5                  # lower_bound = orientation_distance[o];
 search_limited_bound:
-    beq s0, s1, search_limited_backtrack # depth == limit
     add t3, s0, t3             # depth + lower_bound > limit
     bltu s1, t3, search_limited_backtrack
 
@@ -392,14 +394,7 @@ search_limited_next_move:
     xori a1, a1, 1
     add a1, t4, a1
 
-    beq s0, zero, search_limited_turns # Check the previous face if depth > 0
-    add t4, a6, s0             # previous = path[depth - 1];
-    lbu t5, -1(t4)
-    sltiu t6, t5, 3            # previous_face: compare previous with 3 and 6
-    xori t6, t6, 1
-    sltiu a5, t5, 6
-    xori a5, a5, 1
-    add t6, t6, a5
+    lbu t6, 5(t0)             # previous_face was saved when entering this node
     bne a1, t6, search_limited_turns
     # Moves are tried in order, so a matching face starts at 0, 3, or 6.
     addi t4, a0, 3             # Skip the whole face: 0 -> 3, 3 -> 6, 6 -> 9
@@ -442,6 +437,7 @@ search_limited_quarter_turn:
     sh t1, 0(t0)
     sh t2, 2(t0)
     sb zero, 4(t0)
+    sb a1, 5(t0)              # Save the face used to reach this child
     j search_limited_loop
 
 search_limited_backtrack:
