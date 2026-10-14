@@ -349,6 +349,7 @@ search_limited:
     la s3, orientation_distance
     la s4, permutation_table
     la s5, orientation_table
+    la a6, search_path         # No nested calls; a6 keeps the path base
     li s0, 0                   # depth = 0; keep depth in s0
     mv s1, a2                  # Keep limit in s1
     sh a0, 0(sp)               # stack[0] = (search_frame_t) {p, o, 0};
@@ -358,6 +359,7 @@ search_limited:
     # SEARCH_NODE_VISITED() is a no-op outside host tests.
 
 search_limited_loop:
+    # Check solved and the lower bound only when entering a new node.
     # s0 = depth, s1 = limit; t0 = frame, t1 = p, t2 = o.
     # a0 = move, a1 = face, a2 = turns; a3/a4 = transition row addresses.
     lhu t1, 0(t0)
@@ -373,11 +375,14 @@ search_limited_loop:
     mv t3, t5                  # lower_bound = orientation_distance[o];
 search_limited_bound:
     beq s0, s1, search_limited_backtrack # depth == limit
+    add t3, s0, t3             # depth + lower_bound > limit
+    bltu s1, t3, search_limited_backtrack
+
+search_limited_next_move:
+    # This node already passed the bound; only next_move has changed.
     lbu a0, 4(t0)              # frame->next_move == MOVES
     li t4, 9
     beq a0, t4, search_limited_backtrack
-    add t3, s0, t3             # depth + lower_bound > limit
-    bltu s1, t3, search_limited_backtrack
 
     addi t4, a0, 1             # move = frame->next_move++;
     sb t4, 4(t0)
@@ -388,15 +393,18 @@ search_limited_bound:
     add a1, t4, a1
 
     beq s0, zero, search_limited_turns # Check the previous face if depth > 0
-    la t4, search_path         # previous = path[depth - 1];
-    add t4, t4, s0
+    add t4, a6, s0             # previous = path[depth - 1];
     lbu t5, -1(t4)
     sltiu t6, t5, 3            # previous_face: compare previous with 3 and 6
     xori t6, t6, 1
     sltiu a5, t5, 6
     xori a5, a5, 1
     add t6, t6, a5
-    beq a1, t6, search_limited_loop # if (face == previous_face) continue;
+    bne a1, t6, search_limited_turns
+    # Moves are tried in order, so a matching face starts at 0, 3, or 6.
+    addi t4, a0, 3             # Skip the whole face: 0 -> 3, 3 -> 6, 6 -> 9
+    sb t4, 4(t0)
+    j search_limited_next_move
 
 search_limited_turns:
     slli a2, a1, 1             # turns = move - ((face << 1) + face) + 1;
@@ -427,8 +435,7 @@ search_limited_quarter_turn:
     addi a2, a2, -1            # Repeat until all quarter turns are applied
     bne a2, zero, search_limited_quarter_turn
 
-    la t4, search_path         # path[depth] = move;
-    add t4, t4, s0
+    add t4, a6, s0             # path[depth] = move;
     sb a0, 0(t4)
     addi s0, s0, 1             # stack[++depth] = next;
     addi t0, t0, 6             # frame = &stack[depth]; each entry is 6 bytes
@@ -441,7 +448,9 @@ search_limited_backtrack:
     beq s0, zero, search_limited_failed # if (depth == 0) return -1;
     addi s0, s0, -1            # --depth; continue;
     addi t0, t0, -6            # Move frame back to the parent entry
-    j search_limited_loop
+    lhu t1, 0(t0)              # Restore the parent's p and o before resuming
+    lhu t2, 2(t0)
+    j search_limited_next_move
 search_limited_solved:
     mv a0, s0                  # return depth;
     j search_limited_return
