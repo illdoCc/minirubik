@@ -12,7 +12,7 @@ VECTORS := tests/solutions.txt
 INVALID_STATES := 1234567111111 123456711111111 02345671111111 82345671111111 \
 	12345671111110 12345671111114 1234567111111a 11345671111111 12345671111112
 
-.PHONY: all check check-full prove clean indent
+.PHONY: all check check-full check-tables prove clean indent
 
 all: solver mini
 
@@ -28,7 +28,15 @@ tests/heuristic: tests/heuristic.c solver.c
 check-full: tests/heuristic
 	./tests/heuristic --full
 
-check: solver mini tests/heuristic $(VECTORS)
+check-tables: tools/gen_tables.c solver.c tables.s
+	@tmp=$$(mktemp -d) || exit 1; \
+		trap 'rm -rf "$$tmp"' 0 1 2 15; \
+		$(CC) $(CFLAGS) tools/gen_tables.c -o "$$tmp/gen_tables" && \
+		"$$tmp/gen_tables" >"$$tmp/tables.s" && \
+		cmp tables.s "$$tmp/tables.s" && \
+		echo "tables.s matches freshly generated C tables"
+
+check: solver mini tests/heuristic $(VECTORS) check-tables
 	./solver --self-test
 	./tests/heuristic
 	@actual=$$(mktemp); \

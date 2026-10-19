@@ -92,6 +92,42 @@ rotations, including blank areas and bounds. It also checks actual solution
 replay, the disabled renderer, and solved, short, and distance-11 cases on
 `RV32_5S`. The 50-million-instruction requirement excludes the renderer.
 
+### GCC comparison and code size
+
+With a RISC-V GCC toolchain and its binutils available, run:
+
+```sh
+python3 tools/compare_gcc.py "$RIPES" \
+    --cc riscv64-unknown-elf-gcc --output tests/ripes-all/gcc-comparison
+```
+
+`--cc` also accepts an absolute compiler path. The script builds with
+`-O2 -march=rv32i -mabi=ilp32`, without libc, small-data addressing, or linker
+relaxation. Both versions use host-generated tables and exclude the renderer.
+`tools/ripes_target.c` provides Ripes output and solution replay; the existing
+parse, validation, ranking, and search functions are extracted from `solver.c`.
+For target replay only, `% 3` in `quarter_turn` becomes a conditional
+subtraction: valid operands sum to at most four. The search is unchanged.
+
+The script tests solved, one-move, specified distance-11, and known worst-case
+inputs on `RV32_ISS`. Each answer is replayed and checked against the host BFS
+oracle. It also rejects non-RV32I instructions and arithmetic helpers, and
+checks that loading the handwritten ELF gives the same count as Ripes' own
+assembler. GNU assembly uses `.balign` to preserve Ripes' byte alignment.
+
+Results include `results.csv`, `summary.json`, build commands, ELF files,
+disassembly, stack-usage files, and raw logs. The output directory is ignored
+by Git. Code size is the linked `.text` section reported by `size -A`:
+
+```sh
+riscv64-unknown-elf-size -A \
+    tests/ripes-all/gcc-comparison/21345671111111/gcc/solver.elf
+```
+
+Read the `.text` row, not the total. Static data is the sum of `.data`, `.bss`,
+and `.rodata`. Both builds reserve a 256-byte call stack; GCC 13.2.0 reports
+160 bytes of stack use for `target_main`, with zero for its remaining C callees.
+
 ### Reading the 14-digit input
 
 The program receives one 14-digit code with no spaces. For explanation, split

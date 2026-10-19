@@ -48,7 +48,47 @@ static int exact_distance(const uint8_t *table, uint32_t rank)
     return distance;
 }
 
-/* Check table completeness, solved entries, and maximum distances (H2).
+/* Check every transition, including solved, against direct cubie turns.
+ * Sentinel entries catch missing writes; each face is a permutation of ranks.
+ */
+static int check_transitions(void)
+{
+    search_t search;
+    memset(&search, 0xff, sizeof search);
+    build_transitions(search.permutation, search.orientation);
+    for (unsigned component = 0; component < 2; ++component) {
+        uint16_t count = component ? ORIENTATIONS : PERMUTATIONS;
+        for (uint8_t face = 0; face < 3; ++face) {
+            const uint16_t *row = component ? search.orientation[face]
+                                           : search.permutation[face];
+            uint16_t maximum = 0;
+            for (uint16_t rank = 0; rank < count; ++rank) {
+                state_t state;
+                unrank_state(component ? rank : (uint32_t) rank * ORIENTATIONS,
+                             &state);
+                state_t next = quarter_turn(state, face);
+                uint16_t p, o;
+                rank_components(&next, &p, &o);
+                uint16_t expected = component ? o : p;
+                if (!valid(&next) || row[rank] >= count ||
+                    row[rank] != expected) {
+                    fprintf(stderr,
+                            "transition component %u face %u rank %u: "
+                            "got %u, expected %u\n",
+                            component, face, rank, row[rank], expected);
+                    return 0;
+                }
+                if (row[rank] > maximum)
+                    maximum = row[rank];
+            }
+            if (maximum != count - 1U)
+                return 0;
+        }
+    }
+    return 1;
+}
+
+/* Check distance table completeness, solved entries, and maxima (H2).
  * Verify the heuristic never exceeds the exact BFS distance for any state (H1).
  */
 static int check_distances(const uint8_t *table)
@@ -283,12 +323,15 @@ int main(int argc, char **argv)
         free(table);
         return passed ? output_failed() : 1;
     }
-    int passed = diameter == 11 && check_distances(table);
+    int passed = diameter == 11 && check_transitions() &&
+                 check_distances(table);
     free(table);
     if (!passed) {
         fputs("heuristic table or search check failed\n", stderr);
         return 1;
     }
+    puts("transition tables complete; maxima 5039 and 728; "
+         "all entries checked");
     puts("heuristic tables complete; maxima 7 and 6; admissible on 3674160 states");
     puts("bounded DFS: cutoffs and paths verified through depth 4 and at 11");
     puts("IDA*: BFS distances matched through depth 4 and samples at depths 5-11");
